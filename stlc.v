@@ -280,9 +280,7 @@ Ltac substify := auto_unfold; try repeat (erewrite rinst_inst_tm; [|now intros])
 
 Ltac renamify := auto_unfold; try repeat (erewrite <- rinst_inst_tm; [|intros; now asimpl]).
 
-Ltac inv H := inversion H; subst; clear H.
 (* contexts *)
-
 Definition ctxt n := fin n -> ty. (* this definition of a context probably lets us more readily use autosubst's notation and substitution machinery *)
 
 Definition empty : ctxt 0 := fun x : fin 0 => let t := match x return ty with
@@ -339,6 +337,17 @@ Inductive hasType {n} : ctxt n -> tm n -> ty -> Prop :=
 
 Hint Constructors hasType.
 
+(* crunch helps with some nonsense that crops up when inverting our typing relation *)
+Ltac crunch :=
+  repeat match goal with
+         | [ t1 : tm 0 |- _] => match goal with                            
+                          | [ HTy : hasType empty t1 _ , H : forall t0 : tm 0,
+                                  0 = 0 -> t1 ~= t0 -> forall T : ty, hasType empty t0 T -> value t0 \/ (exists t' : tm 0, red t0 t') |- _] => specialize (H _ eq_refl JMeq_refl _ HTy)
+                           end
+         end.
+
+Ltac inv H := inversion H; crunch; subst; clear H.
+
 Theorem canonical_forms_abs: forall n G (t : tm n) T1 T2,
     hasType G t (arrow T1 T2) ->
     value t ->
@@ -355,19 +364,15 @@ Theorem canonical_forms_bool: forall n G (t : tm n),
   induction Hval; inv HTy; auto.
 Qed.
 
-(* This proof is kind of ugly in places, due to some dependent type nonsense that I don't entirely understand yet. *)
 Lemma progress: forall t T,
       hasType empty t T ->
       value t \/ exists t', red t t'.
   Proof.
     intros t T HTy.
-    dependent induction t; try eauto; fold empty in *.
+    dependent induction t; try eauto.
     - destruct f. 
     - right.
-      inversion HTy.
-      subst.
-      specialize (IHt1 _ eq_refl JMeq_refl _ H2).
-      specialize (IHt2 _ eq_refl JMeq_refl _ H4).
+      inv HTy.
       destruct IHt1 as [HValt1 | Hredt1].
       + (* t1 value *)
         destruct IHt2 as [HValt2 | Hredt2].
@@ -385,12 +390,8 @@ Lemma progress: forall t T,
       +  (* t1 steps *)
         inversion Hredt1.
         exists (app x t2); eauto.
-      
     -
       inv HTy.
-      specialize (IHt1 _ eq_refl JMeq_refl _ H3).
-      specialize (IHt2 _ eq_refl JMeq_refl _ H5).
-      specialize (IHt3 _ eq_refl JMeq_refl _ H6).
       right.
       destruct IHt1 as [HVal | HStep].
       + (* discriminant of branch is a value *)
@@ -404,31 +405,17 @@ Lemma progress: forall t T,
   
   Fixpoint typres_ren n m G D t T (H : hasType G t T) (delta : fin n -> fin m) {struct H}:
     (forall f, G f = D (delta f)) -> (hasType D t⟨delta⟩ T).
-    destruct H; simpl; intros; asimpl.
-    - rewrite (H i).
-      econstructor.
-    -
-      econstructor; eauto.
-    -
-      econstructor.
-      eapply typres_ren.
-      exact H.
-
-      intros.
+    destruct H; simpl; intros; asimpl; try rewrite (H i); econstructor; eauto; try eapply typres_ren; try assumption.
+    - exact H.
+    - intro.
       destruct f.
       simpl.
       exact (H0 f).
       simpl.
-      reflexivity.
-    -
-      eauto.
-    -
-      eauto.
-    -
-      eauto.
+      auto.
   Qed.
 
-  (* ugly: CLEAN ME *)
+  (* CLEAN ME *)
   Fixpoint typres_subst n m (sigma : fin n -> tm m) (Gamma : ctxt n) (Delta : ctxt m) (t : tm n) T (H: hasType Gamma t T) {struct H} : 
 (forall i, hasType Delta (sigma i) (Gamma i)) -> hasType Delta t[sigma] T.
   Proof with eauto.
